@@ -1,4 +1,5 @@
 #!/bin/bash
+
 export merchant_ID=$1
 mkdir -p /metadata/sftp/mct_settle/$1/download/settlement
 sudo useradd -d /metadata/sftp/mct_settle/$1/download/settlement -s /usr/bin/rssh $1
