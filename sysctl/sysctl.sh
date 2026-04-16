@@ -1,7 +1,5 @@
 #!/bin/bash
-#vim: set expandtab tabstop=4 shiftwidth=4 softtabstop=4:
 
-# chkconfig: 2345 20 85
 
 SYSCTL_RUN(){
 
@@ -34,17 +32,17 @@ else
 fi
 
 echo "Update ulimit for $host"
->/etc/security/limits.d/25-dana.conf cat << EOF
+>/etc/security/limits.d/25-rock.conf cat << EOF
 
-chatbot soft nofile $ulimitMax
-chatbot soft nproc  $ulimitMax
-chatbot hard nofile $ulimitMax
-chatbot hard nproc  $ulimitMax
+* soft nofile $ulimitMax
+* soft nproc  $ulimitMax
+* hard nofile $ulimitMax
+* hard nproc  $ulimitMax
 
 EOF
 
 echo "Update sysctl for $host"
->/etc/sysctl.d/10-dana.conf cat << EOF
+>/etc/sysctl.d/10-rock.conf cat << EOF
 kernel.printk = 4 4 1 7
 kernel.panic = 10
 kernel.sysrq = 0
@@ -54,8 +52,8 @@ kernel.core_uses_pid = 1
 kernel.msgmnb = 65536
 kernel.msgmax = 65536
 vm.swappiness = 1
-vm.dirty_ratio = 80
-vm.dirty_background_ratio = 5
+vm.dirty_ratio = $vm_dirty_ratio
+vm.dirty_background_ratio = $vm_dirty_bg_ratio
 vm.dirty_expire_centisecs = 12000
 vm.min_free_kbytes = $min_free
 fs.file-max = $file_max
@@ -87,10 +85,10 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.ip_local_port_range = 10000 65535
 net.ipv4.ip_no_pmtu_disc = 1
 net.ipv4.route.flush = 1
-net.ipv4.route.max_size = 8048576
 net.ipv4.icmp_echo_ignore_broadcasts = 1
 net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.tcp_congestion_control = htcp
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_mem = 65536 131072 262144
 net.ipv4.udp_mem = 65536 131072 262144
 net.ipv4.tcp_rmem = 4096 87380 16777216
@@ -98,7 +96,6 @@ net.ipv4.udp_rmem_min = 16384
 net.ipv4.tcp_wmem = 4096 87380 16777216
 net.ipv4.udp_wmem_min = 16384
 net.ipv4.tcp_max_tw_buckets = $max_tw
-net.ipv4.tcp_tw_recycle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_max_orphans = $max_orphan
 net.ipv4.tcp_orphan_retries = 1
@@ -111,7 +108,6 @@ net.ipv4.tcp_max_syn_backlog = 20000
 net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_dsack = 1
-net.ipv4.tcp_fack = 1
 net.ipv4.tcp_ecn = 2
 net.ipv4.tcp_fin_timeout = 20
 net.ipv4.tcp_keepalive_time = 600
@@ -128,7 +124,7 @@ net.ipv4.inet_peer_gc_mintime = 5
 EOF
 
 sysctl --system
-modprobe ip_conntrack
+modprobe nf_conntrack
 modprobe nf_log_ipv4
 modprobe xt_NFLOG
 modprobe nf_log_ipv6
