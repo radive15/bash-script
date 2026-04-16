@@ -2,6 +2,19 @@
 
 set -euo pipefail
 
+# Redirect semua output ke log untuk debugging bootstrap
+exec > >(tee /var/log/dns-bootstrap.log) 2>&1
+echo "=== DNS Bootstrap dimulai: $(date) ==="
+
+# Tunggu network dan IMDS ready sebelum lanjut
+echo "Menunggu IMDS ready..."
+until curl -s -o /dev/null -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"; do
+    echo "IMDS belum siap, coba lagi dalam 2 detik..."
+    sleep 2
+done
+echo "IMDS ready."
+
 domain="k8s.local"
 binAWS="/usr/bin/aws"
 
@@ -28,23 +41,32 @@ if [ -z "$privateIP" ] || [ -z "$getMetadataName" ] || [ "$getMetadataName" = "N
     exit 1
 fi
 
-zone="${ROUTE53_ZONE_ID:-$($binAWS ssm get-parameter --region "$REGION" --name "/dns/zone-id" --query 'Parameter.Value' --output text)}"
+# Ambil zone ID dari env var atau SSM
+zone="${ROUTE53_ZONE_ID:-}"
+if [ -z "$zone" ]; then
+    zone=$($binAWS ssm get-parameter --region "$REGION" \
+      --name "/dns/zone-id" --query 'Parameter.Value' --output text)
+fi
+
 subDomain="$(echo "$getMetadataName" | cut -d '.' -f 1)"
 hostname=$getMetadataName
 
 #Set Hostname
 hostnamectl set-hostname --static "$hostname"
-echo $hostname > /etc/hostname
-sed -i 's/ - set_hostname/\#- set_hostname/' /etc/cloud/cloud.cfg
-sed -i 's/ - update_hostname/\#- update_hostname/' /etc/cloud/cloud.cfg
-echo "127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain4 localhost.$domain
-::1       localhost localhost.localdomain localhost6 localhost6.localdomain6
+echo "$hostname" > /etc/hostname
 
-$privateIP $hostname $subDomain" > /etc/hosts
+# Disable cloud-init hostname override jika ada
+if grep -q "set_hostname" /etc/cloud/cloud.cfg 2>/dev/null; then
+    sed -i 's/ - set_hostname/#- set_hostname/' /etc/cloud/cloud.cfg
+    sed -i 's/ - update_hostname/#- update_hostname/' /etc/cloud/cloud.cfg
+fi
+
+printf "127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain4 localhost.%s\n::1       localhost localhost.localdomain localhost6 localhost6.localdomain6\n\n%s %s %s\n" \
+  "$domain" "$privateIP" "$hostname" "$subDomain" > /etc/hosts
 
 #Set DNS
 
-aws route53 change-resource-record-sets \
+$binAWS route53 change-resource-record-sets \
   --hosted-zone-id "$zone" \
   --change-batch "{
     \"Changes\": [{
