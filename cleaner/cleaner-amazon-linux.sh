@@ -1,4 +1,7 @@
 #!/bin/bash
+set -u
+
+umask 077
 
 export LANG=C
 export PATH=/sbin:/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin
@@ -43,10 +46,16 @@ if command -v lsof &>/dev/null; then
     LSOF_CMD="lsof"
 fi
 
-LSOF_FILE=/tmp/cleaner_lsof.out
+LSOF_TMPDIR=/tmp
 if [[ -d /dev/shm && -k /dev/shm ]]; then
-    LSOF_FILE=/dev/shm/cleaner_lsof.out
+    LSOF_TMPDIR=/dev/shm
 fi
+LSOF_FILE=$(mktemp "${LSOF_TMPDIR}/cleaner_lsof.XXXXXX")
+
+_cleanup() {
+    [[ -f ${LSOF_FILE:-} ]] && rm -f "$LSOF_FILE"
+}
+trap _cleanup EXIT INT TERM
 
 prepare_lsof() {
     if [[ -n $LSOF_CMD ]]; then
@@ -60,10 +69,10 @@ prepare_lsof() {
 }
 
 delete_lsof() {
-    $RM_CMD -rf $LSOF_FILE
+    [[ -f ${LSOF_FILE:-} ]] && $RM_CMD -f "$LSOF_FILE"
 }
 
-# only return true when all ready
+
 file_in_lsof() {
     local fpath=$1
     if [[ -n $LSOF_CMD && -f $LSOF_FILE ]]; then
@@ -97,18 +106,25 @@ log_debug() {
 
 delete_files() {
     [[ $DELETE_FLAG != '-delete' ]] && return
-    $RM_CMD -rf "$@" &>/dev/null
+    local f
+    for f in "$@"; do
+        # safety: only delete files inside LOGS_DIR
+        [[ $f != ${LOGS_DIR}/* ]] && { log_warn "blocked delete outside LOGS_DIR: $f"; continue; }
+        $RM_CMD -rf "$f" &>/dev/null
+    done
 }
 
 crush_files() {
     [[ $DELETE_FLAG != '-delete' ]] && return
+    local f
     for f in "$@"; do
-        > $f
+        [[ $f != ${LOGS_DIR}/* ]] && { log_warn "blocked crush outside LOGS_DIR: $f"; continue; }
+        > "$f"
     done
 }
 
 clean_file() {
-    # eliminates file in a low-speed way (default: 20MB/S)
+    
     local fpath=$1
     local fsize=$2
     local chunksize=${CHUNK_SIZE:-20}
@@ -137,7 +153,7 @@ clean_file() {
             log_debug "removed $fpath size $fsize directly"
         fi
     else
-        # slow delete
+       
         local tstart=$SECONDS
         local tstake=$((1+tstart))
         local loop=$((fsize/(1048576*chunksize)+1))
@@ -161,7 +177,7 @@ clean_file() {
                 "removed $fpath size $fsize in $((SECONDS-tstart)) seconds"
         fi
     fi
-    # here a time delta between lsof and remove
+   
     if [[ -n $LSOF_CMD && $is_open -eq 0 ]]; then
         delete_files $fpath
         return $CLEANER_OK
@@ -358,7 +374,7 @@ clean_until() {
         log_info "usage from $old_usage to $cur_usage"
     fi
 
-    # now we have to remove recent logs by date
+    
     while [[ $cur_usage -gt $to_rate ]]; do
         if [[ $how_long -lt 1 ]]; then
             break
@@ -373,7 +389,7 @@ clean_until() {
         fi
     done
 
-    # in hours
+    
     how_long=24
     while [[ $cur_usage -gt $to_rate ]]; do
         if [[ $how_long -lt 2 ]]; then
@@ -390,7 +406,7 @@ clean_until() {
     done
 
     [[ $force -ne 1 ]] && return
-    # last resort, find top size logs to deleted
+    
 
     if [[ ${CHUNK_SIZE:-1} -ne 0 ]]; then
         CHUNK_SIZE=100
@@ -418,10 +434,11 @@ ensure_unique() {
     local pids
     pids=$(ps -e -o pid,pgid,cmd | \
                     grep '[c]leaner' | \
-                    awk "\$2 != $pgid {print \$1}")
+                    awk "\$2 != $pgid {print \$1}" | \
+                    grep -E '^[0-9]+$')
     if [[ -n $pids ]]; then
         if [[ $INTERACTIVE -eq 1 ]]; then
-            kill $pids
+            kill -- $pids
         else
             log_info "$0 is running, wait for another round of dispatch"
             exit 0
@@ -437,17 +454,26 @@ _main() {
 
     # load config
     if [[ -f $CONF_FILE && ! "$*" =~ --noconf ]]; then
+        # restrict config file permissions check
+        local conf_perms
+        conf_perms=$(stat -c '%a' "$CONF_FILE")
+        if [[ $conf_perms != '600' && $conf_perms != '400' ]]; then
+            echo "$0: WARNING: $CONF_FILE should be mode 600, got $conf_perms" >&2
+        fi
         while IFS='=' read -r key value; do
             [[ -z $key || $key == \#* ]] && continue
+            # strip leading/trailing whitespace and disallow non-printable chars
+            key=$(echo "$key" | tr -d '[:space:]')
+            value=$(echo "$value" | tr -d '[:space:]')
             case $key in
                 to)
-                    to_rate=$value;;
+                    [[ $value =~ ^[0-9]+$ ]] && to_rate=$value;;
                 block)
-                    CHUNK_SIZE=$value;;
+                    [[ $value =~ ^[0-9]+$ ]] && CHUNK_SIZE=$value;;
                 fast)
                     CHUNK_SIZE=0;;
                 from)
-                    from_rate=$value;;
+                    [[ $value =~ ^[0-9]+$ ]] && from_rate=$value;;
                 sleep)
                     do_sleep=1;;
                 debug)
@@ -457,17 +483,9 @@ _main() {
                 *)
                     ;;
             esac
-        done < $CONF_FILE
+        done < "$CONF_FILE"
     fi
 
-    # option help
-    # -r clean to this ratio
-    # -b wipe this blocksize each time
-    # -t start cleaning when above this ratio
-    # -n fast delete (use rm -rf)
-    # -s random sleep awhile in a app clusters
-    # -d extra debug logging
-    # -f force delete largest file
     while getopts ":r:b:t:nsdfi" opt; do
         case $opt in
         r)
@@ -530,7 +548,6 @@ _main() {
     clean_until $from_rate $to_rate $force
 }
 
-# TODO make a decision whether /home/admin is innocent
-# TODO deamonize
+
 
 _main "$@"
