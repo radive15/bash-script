@@ -70,7 +70,7 @@ Lakukan ini **sebelum** instance dibuat, dari mesin lokal atau CI/CD:
 ```bash
 aws ssm put-parameter \
   --name "/dns/zone-id" \
-  --value "Z0027769AL6VVCOQ6GCX" \
+  --value "XXXXXXXXXXXXXXXXXXXX" \
   --type "String" \
   --region ap-southeast-1
 ```
@@ -83,7 +83,7 @@ aws ssm put-parameter \
 ### Step 3 — Verifikasi Hosted Zone di Route 53
 
 ```bash
-aws route53 get-hosted-zone --id Z0027769AL6VVCOQ6GCX
+aws route53 get-hosted-zone --id XXXXXXXXXXXXXXXXXXXX
 ```
 
 - [ ] Hosted Zone dengan domain `radifan.local` sudah ada
@@ -205,7 +205,7 @@ cat /etc/hosts
 **Cek DNS record di Route 53:**
 ```bash
 aws route53 list-resource-record-sets \
-  --hosted-zone-id Z0027769AL6VVCOQ6GCX \
+  --hosted-zone-id XXXXXXXXXXXXXXXXXXXX \
   --query "ResourceRecordSets[?Name=='node1.radifan.local.']"
 ```
 
