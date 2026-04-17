@@ -15,7 +15,7 @@ until curl -s -o /dev/null -X PUT "http://169.254.169.254/latest/api/token" \
 done
 echo "IMDS ready."
 
-domain="k8s.local"
+domain="radifan.local"
 binAWS="/usr/bin/aws"
 
 # IMDSv2 - ambil token dulu

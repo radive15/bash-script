@@ -86,7 +86,7 @@ aws ssm put-parameter \
 aws route53 get-hosted-zone --id Z0027769AL6VVCOQ6GCX
 ```
 
-- [ ] Hosted Zone dengan domain `k8s.local` sudah ada
+- [ ] Hosted Zone dengan domain `radifan.local` sudah ada
 - [ ] Zone ID sesuai dengan yang disimpan di SSM
 - [ ] Hosted Zone berjenis **Private** dan sudah di-associate ke VPC yang akan digunakan instance
 
@@ -98,7 +98,7 @@ Script mengambil hostname dari tag `Name`. Tag **wajib diset saat launch**, buka
 
 Format tag yang diharapkan:
 ```
-Name = node1.k8s.local
+Name = node1.radifan.local
 ```
 
 Contoh launch via AWS CLI dengan tag:
@@ -107,11 +107,11 @@ aws ec2 run-instances \
   --image-id ami-xxxxxxxx \
   --instance-type t3.medium \
   --iam-instance-profile Name=<nama-iam-role> \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=node1.k8s.local}]' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=node1.radifan.local}]' \
   --user-data file://dns.sh
 ```
 
-- [ ] Format tag mengikuti pola `<subdomain>.<domain>` (contoh: `node1.k8s.local`)
+- [ ] Format tag mengikuti pola `<subdomain>.<domain>` (contoh: `node1.radifan.local`)
 - [ ] Tag `Name` sudah di-set di resource spec saat launch (bukan setelah instance jalan)
 - [ ] Nilai tag tidak mengandung spasi atau karakter khusus
 
@@ -171,7 +171,7 @@ aws ec2 run-instances \
   --iam-instance-profile Name=<nama-iam-role> \
   --metadata-options HttpTokens=required,HttpEndpoint=enabled \
   --tag-specifications \
-    'ResourceType=instance,Tags=[{Key=Name,Value=node1.k8s.local}]' \
+    'ResourceType=instance,Tags=[{Key=Name,Value=node1.radifan.local}]' \
   --user-data file://dns.sh
 ```
 
@@ -206,12 +206,12 @@ cat /etc/hosts
 ```bash
 aws route53 list-resource-record-sets \
   --hosted-zone-id Z0027769AL6VVCOQ6GCX \
-  --query "ResourceRecordSets[?Name=='node1.k8s.local.']"
+  --query "ResourceRecordSets[?Name=='node1.radifan.local.']"
 ```
 
 **Cek resolusi DNS dari instance lain di VPC yang sama:**
 ```bash
-nslookup node1.k8s.local
+nslookup node1.radifan.local
 ```
 
 - [ ] `/var/log/dns-bootstrap.log` tidak mengandung error
@@ -240,5 +240,5 @@ nslookup node1.k8s.local
 
 - Script ini **idempotent** — aman dijalankan lebih dari satu kali karena menggunakan `UPSERT` untuk DNS record
 - Log bootstrap tersimpan di `/var/log/dns-bootstrap.log` dan `/var/log/cloud-init-output.log`
-- Domain `k8s.local` dan zone ID di script perlu disesuaikan dengan environment masing-masing
+- Domain `radifan.local` dan zone ID di script perlu disesuaikan dengan environment masing-masing
 - Script berjalan sebagai **root** via cloud-init, tidak perlu `sudo`
