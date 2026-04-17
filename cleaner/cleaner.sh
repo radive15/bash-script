@@ -1,60 +1,61 @@
 #!/bin/bash
 
 export LANG=C
-export PATH=/sbin:/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/usr/local/bin:/bin:/usr/bin:/usr/X11R6/bin:/home/admin/bin
+export PATH=/sbin:/bin:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin
 
-
-readonly LOGS_DIR=/home/admin/logs
-readonly CONF_FILE=/home/admin/cleaner.conf
+readonly BASE_DIR=/home/ec2-user
+readonly LOGS_DIR=${BASE_DIR}/logs
+readonly CONF_FILE=${BASE_DIR}/cleaner.conf
 readonly RESERVE=14
 DELETE_FLAG='-delete'
 DEBUG=''
 CHUNK_SIZE=''
 INTERACTIVE=0
-ZCLEAN_DIGEST="${LOGS_DIR}/cleaner.log.$(date +%F)"
+CLEANER_DIGEST="${LOGS_DIR}/cleaner.log.$(date +%F)"
 
 
 {
-    readonly ZCLEAN_OK=1
-    readonly ZCLEAN_CRUSH=2
-    readonly ZCLEAN_ERROR=3
-    readonly ZCLEAN_IGNORE=4
+    readonly CLEANER_OK=1    
+    readonly CLEANER_CRUSH=2
+    readonly CLEANER_ERROR=3
+    readonly CLEANER_IGNORE=4
 }
 
 [[ ! -d $LOGS_DIR ]] && exit
 
 CMD_PREFIX=''
-if $(which ionice >& /dev/null); then
+if command -v ionice &>/dev/null; then
     CMD_PREFIX="ionice -c3 "
 fi
-if $(which nice >& /dev/null); then
+if command -v nice &>/dev/null; then
     CMD_PREFIX="nice -n 19 $CMD_PREFIX"
 fi
 FIND_CMD="${CMD_PREFIX}find"
 RM_CMD="${CMD_PREFIX}rm"
 
 TRUNCATE_CMD=''
-if $(which truncate >& /dev/null); then
+if command -v truncate &>/dev/null; then
     TRUNCATE_CMD="${CMD_PREFIX}truncate"
 fi
 
 LSOF_CMD=''
-if $(which lsof >& /dev/null); then
+if command -v lsof &>/dev/null; then
     LSOF_CMD="lsof"
 fi
 
 LSOF_FILE=/tmp/cleaner_lsof.out
-if [[ -d /dev/shm ]]; then
-    shm_mode=$(stat -c "%A"  /dev/shm)
-    if [[ $shm_mode == drwxrwxrwt ]]; then
-        LSOF_FILE=/dev/shm/cleaner_lsof.out
-    fi
+if [[ -d /dev/shm && -k /dev/shm ]]; then
+    LSOF_FILE=/dev/shm/cleaner_lsof.out
 fi
 
 prepare_lsof() {
     if [[ -n $LSOF_CMD ]]; then
-        ulimit -n 1024
-        $LSOF_CMD +D $LOGS_DIR 2> /dev/null > $LSOF_FILE
+        local cur_limit
+        cur_limit=$(ulimit -n)
+        if [[ $cur_limit != 'unlimited' && $cur_limit -lt 65536 ]]; then
+            ulimit -n 65536 2>/dev/null || true
+        fi
+        $LSOF_CMD +D "$LOGS_DIR" 2>/dev/null > "$LSOF_FILE"
     fi
 }
 
@@ -66,34 +67,37 @@ delete_lsof() {
 file_in_lsof() {
     local fpath=$1
     if [[ -n $LSOF_CMD && -f $LSOF_FILE ]]; then
-        grep -q $fpath $LSOF_FILE
+        grep -qF "$fpath" "$LSOF_FILE"
         return $?
-    else
-        return 1
     fi
-
+    # fallback: check /proc/*/fd when lsof is unavailable
+    local fd_link
+    for fd_link in /proc/*/fd/*; do
+        [[ $(readlink "$fd_link" 2>/dev/null) == "$fpath" ]] && return 0
+    done
+    return 1
 }
 
 log_error() {
-    echo $(date +"%F %T") [ERROR] $@ >> $ZCLEAN_DIGEST
+    echo "$(date +"%F %T") [ERROR] $*" >> "$CLEANER_DIGEST"
 }
 
 log_info() {
-    echo $(date +"%F %T") [INFO] $@ >>  $ZCLEAN_DIGEST
+    echo "$(date +"%F %T") [INFO] $*" >> "$CLEANER_DIGEST"
 }
 
 log_warn() {
-    echo $(date +"%F %T") [WARN] $@ >> $ZCLEAN_DIGEST
+    echo "$(date +"%F %T") [WARN] $*" >> "$CLEANER_DIGEST"
 }
 
 log_debug() {
     [[ $DEBUG != '-debug' ]] && return
-    echo $(date +"%F %T") [DEBUG] $@ >> $ZCLEAN_DIGEST
+    echo "$(date +"%F %T") [DEBUG] $*" >> "$CLEANER_DIGEST"
 }
 
 delete_files() {
     [[ $DELETE_FLAG != '-delete' ]] && return
-    $RM_CMD -rf "$@" >& /dev/null
+    $RM_CMD -rf "$@" &>/dev/null
 }
 
 crush_files() {
@@ -110,17 +114,17 @@ clean_file() {
     local chunksize=${CHUNK_SIZE:-20}
 
     if [[ $DELETE_FLAG != '-delete' || ! -f $fpath ]]; then
-        return $ZCLEAN_ERROR
+        return $CLEANER_ERROR
     fi
 
     local is_open=0
-    if file_in_lsof $fpath >& /dev/null; then
+    if file_in_lsof "$fpath" &>/dev/null; then
         is_open=1
     fi
 
     if [[ $is_open -eq 1 && $fsize -eq 0 ]]; then
         log_debug "ignore $fpath(+) size $fsize"
-        return $ZCLEAN_IGNORE
+        return $CLEANER_IGNORE
     fi
 
     if [[ $chunksize -eq 0 || -z $TRUNCATE_CMD ]]; then
@@ -160,20 +164,20 @@ clean_file() {
     # here a time delta between lsof and remove
     if [[ -n $LSOF_CMD && $is_open -eq 0 ]]; then
         delete_files $fpath
-        return $ZCLEAN_OK
+        return $CLEANER_OK
     else
-        return $ZCLEAN_CRUSH
+        return $CLEANER_CRUSH
     fi
 }
 
 get_home_usage() {
     local usage
-    usage=$(df $LOGS_DIR|awk 'END {print $5}'|tr -d '%')
+    usage=$(df -P "$LOGS_DIR" | awk 'NR==2 {print $5}' | tr -d '%')
     if [[ -z $usage ]]; then
         log_error "can't get home partition usage"
         exit 1
     fi
-    echo $usage
+    echo "$usage"
 }
 
 sleep_dif()
@@ -192,11 +196,8 @@ sleep_dif()
 
 clean_expired() {
     local keep_days=$((RESERVE-1))
-    if [[ $HOSTNAME =~ paycorecloud-30- ]]; then
-        keep_days=1
-    fi
     local fpath fsize fmtime how_long expired
-    local ret_code=$ZCLEAN_OK
+    local ret_code=$CLEANER_OK
     $FIND_CMD $LOGS_DIR \
         -type f \
         -name '*log*' \
@@ -208,7 +209,7 @@ clean_expired() {
     while read fpath fsize; do
         clean_file $fpath $fsize
         ret_code=$?
-        if [[ $ret_code -eq $ZCLEAN_OK || $ret_code -eq $ZCLEAN_CRUSH ]]; then
+        if [[ $ret_code -eq $CLEANER_OK || $ret_code -eq $CLEANER_CRUSH ]]; then
             log_info "deleted expired file $fpath size $fsize"
         fi
     done
@@ -227,7 +228,7 @@ clean_expired() {
         else
             clean_file $fpath $fsize
             ret_code=$?
-            if [[ $ret_code -eq $ZCLEAN_OK || $ret_code -eq $ZCLEAN_CRUSH ]]; then
+            if [[ $ret_code -eq $CLEANER_OK || $ret_code -eq $CLEANER_CRUSH ]]; then
                 log_info "deleted expired file $fpath size $fsize"
             fi
         fi
@@ -236,8 +237,8 @@ clean_expired() {
 
 clean_huge() {
     local blocks big_size fpath fsize
-    blocks=$(df /home -k|awk 'END {print $2}')
-    if [[ ! $? ]]; then
+    blocks=$(df -P /home -k | awk 'NR==2 {print $2}')
+    if [[ $? -ne 0 || -z $blocks ]]; then
         log_error "can't get home partition total size"
         exit 1
     fi
@@ -260,7 +261,7 @@ clean_huge() {
 
 clean_by_day() {
     local how_long=$1
-    local ret_code=$ZCLEAN_OK
+    local ret_code=$CLEANER_OK
     $FIND_CMD $LOGS_DIR \
         -type f \
         -name '*log*' \
@@ -269,7 +270,7 @@ clean_by_day() {
     while read fpath fsize; do
         clean_file $fpath $fsize
         ret_code=$?
-        if [[ $ret_code -eq $ZCLEAN_OK || $ret_code -eq $ZCLEAN_CRUSH ]]; then
+        if [[ $ret_code -eq $CLEANER_OK || $ret_code -eq $CLEANER_CRUSH ]]; then
             log_info "deleted $((how_long+1)) days ago file $fpath size $fsize"
         fi
     done
@@ -277,7 +278,7 @@ clean_by_day() {
 
 clean_by_hour() {
     local how_long=$1
-    local ret_code=$ZCLEAN_OK
+    local ret_code=$CLEANER_OK
     $FIND_CMD $LOGS_DIR \
         -type f \
         -name '*log*' \
@@ -286,7 +287,7 @@ clean_by_hour() {
     while read fpath fsize; do
         clean_file $fpath $fsize
         ret_code=$?
-        if [[ $ret_code -eq $ZCLEAN_OK || $ret_code -eq $ZCLEAN_CRUSH ]]; then
+        if [[ $ret_code -eq $CLEANER_OK || $ret_code -eq $CLEANER_CRUSH ]]; then
             log_info "deleted $how_long hours ago file $fpath size $fsize"
         fi
     done
@@ -294,7 +295,7 @@ clean_by_hour() {
 
 clean_largest() {
     local fsize fpath fblock
-    local ret_code=$ZCLEAN_OK
+    local ret_code=$CLEANER_OK
 
     $FIND_CMD $LOGS_DIR \
         -type f \
@@ -308,7 +309,7 @@ clean_largest() {
             clean_file $fpath $fsize
         fi
         ret_code=$?
-        if [[ $ret_code -eq $ZCLEAN_OK || $ret_code -eq $ZCLEAN_CRUSH ]]; then
+        if [[ $ret_code -eq $CLEANER_OK || $ret_code -eq $CLEANER_CRUSH ]]; then
             log_info "deleted largest file $fpath size $fsize"
         fi
     done
@@ -391,7 +392,7 @@ clean_until() {
     [[ $force -ne 1 ]] && return
     # last resort, find top size logs to deleted
 
-    if [[ $CHUNK_SIZE -ne 0 ]]; then
+    if [[ ${CHUNK_SIZE:-1} -ne 0 ]]; then
         CHUNK_SIZE=100
     fi
     while [[ $cur_usage -gt $to_rate ]]; do
@@ -412,9 +413,11 @@ clean_until() {
 }
 
 ensure_unique() {
-    local pgid=$(ps -p $$ -o pgid=)
-    local pids=$(ps -e -o pid,pgid,cmd | \
-                    grep [z]clean | \
+    local pgid
+    pgid=$(ps -p $$ -o pgid=)
+    local pids
+    pids=$(ps -e -o pid,pgid,cmd | \
+                    grep '[c]leaner' | \
                     awk "\$2 != $pgid {print \$1}")
     if [[ -n $pids ]]; then
         if [[ $INTERACTIVE -eq 1 ]]; then
@@ -434,9 +437,8 @@ _main() {
 
     # load config
     if [[ -f $CONF_FILE && ! "$*" =~ --noconf ]]; then
-        while read -r line; do
-            key=$(echo $line|cut -d= -f1)
-            value=$(echo $line|cut -d= -f2)
+        while IFS='=' read -r key value; do
+            [[ -z $key || $key == \#* ]] && continue
             case $key in
                 to)
                     to_rate=$value;;
