@@ -66,7 +66,7 @@ printf "127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdom
 
 #Set DNS
 
-$binAWS route53 change-resource-record-sets \
+CHANGE_ID=$($binAWS route53 change-resource-record-sets \
   --hosted-zone-id "$zone" \
   --change-batch "{
     \"Changes\": [{
@@ -78,4 +78,10 @@ $binAWS route53 change-resource-record-sets \
         \"ResourceRecords\": [{\"Value\": \"$privateIP\"}]
       }
     }]
-  }"
+  }" --query 'ChangeInfo.Id' --output text)
+
+echo "Menunggu DNS propagasi (change: $CHANGE_ID)..."
+until [ "$($binAWS route53 get-change --id "$CHANGE_ID" --query 'ChangeInfo.Status' --output text)" = "INSYNC" ]; do
+  sleep 5
+done
+echo "DNS INSYNC: $subDomain.$domain -> $privateIP"

@@ -31,7 +31,12 @@ Instance launch → user-data dijalankan oleh cloud-init (sebagai root)
 
 ### Step 1 — Buat IAM Role untuk EC2
 
-Buat IAM Role dengan trust policy untuk EC2, lalu attach policy berikut:
+1. Buka **IAM** → **Roles** → **Create role**
+2. Pilih **AWS service** → Use case: **EC2** → **Next**
+3. Skip bagian "Add permissions" → **Next**
+4. Beri nama role, contoh: `ec2-dns-bootstrap-role` → **Create role**
+5. Buka role yang baru dibuat → tab **Permissions** → **Add permissions** → **Create inline policy**
+6. Pilih tab **JSON**, paste policy berikut:
 
 ```json
 {
@@ -51,10 +56,17 @@ Buat IAM Role dengan trust policy untuk EC2, lalu attach policy berikut:
       "Effect": "Allow",
       "Action": ["route53:ChangeResourceRecordSets"],
       "Resource": "arn:aws:route53:::hostedzone/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["route53:GetChange"],
+      "Resource": "arn:aws:route53:::change/*"
     }
   ]
 }
 ```
+
+7. **Next** → beri nama policy, contoh: `ec2-dns-bootstrap-policy` → **Create policy**
 
 - [ ] IAM Role sudah dibuat
 - [ ] Policy `ec2:DescribeTags` sudah di-attach
@@ -65,26 +77,27 @@ Buat IAM Role dengan trust policy untuk EC2, lalu attach policy berikut:
 
 ### Step 2 — Simpan Zone ID di SSM Parameter Store
 
-Lakukan ini **sebelum** instance dibuat, dari mesin lokal atau CI/CD:
+1. Buka **AWS Console** → **Systems Manager** → **Parameter Store** → **Create parameter**
+2. Isi form:
+   - **Name**: `/dns/zone-id`
+   - **Type**: `String`
+   - **Value**: Zone ID dari hosted zone `radifan.local` (format: `ZXXXXXXXXXXXXXXXXX`)
+3. Klik **Create parameter**
 
-```bash
-aws ssm put-parameter \
-  --name "/dns/zone-id" \
-  --value "XXXXXXXXXXXXXXXXXXXX" \
-  --type "String" \
-  --region ap-southeast-1
-```
+Zone ID bisa dilihat di **Route 53** → **Hosted zones** → klik `radifan.local` → kolom **Hosted zone ID**.
 
-- [ ] Zone ID Route 53 sudah diketahui (cek di AWS Console → Route 53 → Hosted Zones)
+- [ ] Zone ID Route 53 sudah diketahui
 - [ ] Parameter `/dns/zone-id` sudah dibuat di SSM
 
 ---
 
 ### Step 3 — Verifikasi Hosted Zone di Route 53
 
-```bash
-aws route53 get-hosted-zone --id XXXXXXXXXXXXXXXXXXXX
-```
+1. Buka **Route 53** → **Hosted zones**
+2. Pastikan `radifan.local` sudah ada di daftar
+3. Klik hosted zone tersebut → tab **Details**, pastikan:
+   - **Type**: `Private`
+   - **VPCs**: sudah di-associate ke VPC yang akan digunakan instance
 
 - [ ] Hosted Zone dengan domain `radifan.local` sudah ada
 - [ ] Zone ID sesuai dengan yang disimpan di SSM
@@ -92,97 +105,39 @@ aws route53 get-hosted-zone --id XXXXXXXXXXXXXXXXXXXX
 
 ---
 
-### Step 4 — Siapkan Tag `Name` untuk Instance
+### Step 4 — Set Tag `Name` saat Launch via Console
 
 Script mengambil hostname dari tag `Name`. Tag **wajib diset saat launch**, bukan setelah instance jalan.
 
-Format tag yang diharapkan:
-```
-Name = node1.radifan.local
-```
+Saat membuat instance di AWS Console, pada bagian **"Add tags"**:
+- Key: `Name`
+- Value: nama instance sesuai format `<subdomain>.<domain>`, contoh: `server1.radifan.local`
 
-Contoh launch via AWS CLI dengan tag:
-```bash
-aws ec2 run-instances \
-  --image-id ami-xxxxxxxx \
-  --instance-type t3.medium \
-  --iam-instance-profile Name=<nama-iam-role> \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=node1.radifan.local}]' \
-  --user-data file://dns.sh
-```
+> **Perhatian:** Jika tag baru ditambahkan setelah instance running, script bootstrap sudah selesai dijalankan dan DNS **tidak akan terdaftar otomatis**.
 
-- [ ] Format tag mengikuti pola `<subdomain>.<domain>` (contoh: `node1.radifan.local`)
-- [ ] Tag `Name` sudah di-set di resource spec saat launch (bukan setelah instance jalan)
+- [ ] Format tag mengikuti pola `<subdomain>.<domain>` (contoh: `server1.radifan.local`)
+- [ ] Tag `Name` sudah diisi di form "Add tags" **sebelum** klik Launch Instance
 - [ ] Nilai tag tidak mengandung spasi atau karakter khusus
 
 ---
 
-### Step 5 — Pastikan IMDSv2 Aktif
+### Step 5 — Launch Instance via Console
 
-Script menggunakan IMDSv2. Pastikan saat launch instance **tidak menonaktifkan** IMDS endpoint:
+Saat membuat instance di AWS Console, pastikan bagian berikut diisi di **"Advanced details"**:
 
-```bash
-# Cek di instance yang sudah berjalan
-aws ec2 describe-instances \
-  --instance-ids <instance-id> \
-  --query 'Reservations[*].Instances[*].MetadataOptions'
-```
+- **IAM instance profile**: pilih role `ec2-dns-bootstrap-role` yang dibuat di Step 1
+- **Metadata accessible**: `Enabled`
+- **Metadata version**: `V1 and V2 (token optional)` atau `V2 only (token required)`
+- **User data**: paste seluruh isi file `dns.sh`
 
-Pastikan output:
-```json
-"HttpTokens": "optional" atau "required",
-"HttpEndpoint": "enabled"
-```
-
-- [ ] IMDS endpoint aktif (`HttpEndpoint: enabled`)
-- [ ] IMDSv2 tidak diblokir oleh security policy
+- [ ] IAM Role `ec2-dns-bootstrap-role` dipilih di field "IAM instance profile"
+- [ ] Metadata accessible di-set `Enabled`
+- [ ] Metadata version tidak di-set ke `Disabled`
+- [ ] User data diisi dengan isi script `dns.sh`
 
 ---
 
-### Step 6 — Upload Script ke S3
-
-Karena digunakan sebagai bootstrap, script harus accessible saat launch. Simpan di S3:
-
-```bash
-aws s3 cp dns.sh s3://<bucket-name>/scripts/dns.sh
-```
-
-Lalu di user-data, unduh dan jalankan:
-
-```bash
-#!/bin/bash
-aws s3 cp s3://<bucket-name>/scripts/dns.sh /tmp/dns.sh
-bash /tmp/dns.sh
-```
-
-Atau langsung embed script `dns.sh` sebagai isi user-data saat launch.
-
-- [ ] Script sudah di-upload ke S3 **atau** siap di-embed sebagai user-data
-- [ ] Bucket S3 accessible dari instance (via IAM Role atau public)
-
----
-
-### Step 7 — Launch Instance dengan IAM Role dan User-data
-
-```bash
-aws ec2 run-instances \
-  --image-id ami-xxxxxxxx \
-  --instance-type t3.medium \
-  --iam-instance-profile Name=<nama-iam-role> \
-  --metadata-options HttpTokens=required,HttpEndpoint=enabled \
-  --tag-specifications \
-    'ResourceType=instance,Tags=[{Key=Name,Value=node1.radifan.local}]' \
-  --user-data file://dns.sh
-```
-
-- [ ] IAM Role di-attach saat launch (`--iam-instance-profile`)
-- [ ] IMDSv2 di-enforce saat launch (`HttpTokens=required`)
-- [ ] Tag `Name` di-set saat launch (`--tag-specifications`)
-- [ ] User-data berisi atau menjalankan script `dns.sh`
-
----
-
-### Step 8 — Verifikasi Hasil Setelah Instance Boot
+### Step 6 — Verifikasi Hasil Setelah Instance Boot
 
 Tunggu instance selesai boot (~2-3 menit), lalu verifikasi:
 
@@ -206,12 +161,12 @@ cat /etc/hosts
 ```bash
 aws route53 list-resource-record-sets \
   --hosted-zone-id XXXXXXXXXXXXXXXXXXXX \
-  --query "ResourceRecordSets[?Name=='node1.radifan.local.']"
+  --query "ResourceRecordSets[?Name=='server1.radifan.local.']"
 ```
 
 **Cek resolusi DNS dari instance lain di VPC yang sama:**
 ```bash
-nslookup node1.radifan.local
+nslookup server1.radifan.local
 ```
 
 - [ ] `/var/log/dns-bootstrap.log` tidak mengandung error
@@ -227,7 +182,7 @@ nslookup node1.radifan.local
 | Error | Kemungkinan Penyebab | Solusi |
 |---|---|---|
 | `ERROR: Gagal ambil metadata dari EC2` | IMDSv2 diblokir atau tag Name tidak ada | Cek IMDS setting dan tag EC2 |
-| `An error occurred (AccessDenied)` | IAM Role kurang permission atau belum di-attach saat launch | Tambahkan permission (Step 1), pastikan di-attach saat launch (Step 7) |
+| `An error occurred (AccessDenied)` | IAM Role kurang permission atau belum di-attach saat launch | Tambahkan permission (Step 1), pastikan di-attach saat launch (Step 5) |
 | `ParameterNotFound` | SSM parameter `/dns/zone-id` belum dibuat | Jalankan Step 2 |
 | `getMetadataName = None` | Tag `Name` di-set setelah instance launch | Tag wajib ada saat launch (Step 4) |
 | DNS tidak resolve | Hosted Zone tidak di-associate ke VPC | Associate Private Hosted Zone ke VPC (Step 3) |
