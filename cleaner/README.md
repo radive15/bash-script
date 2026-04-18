@@ -1,202 +1,137 @@
-# cleaner-amazon-linux.sh
+# Cleaner — Auto-Bersih Log Server
 
-Script Bash untuk membersihkan file log secara otomatis di Amazon Linux EC2. Script ini menjaga partisi `/home` agar tidak penuh dengan menghapus log lama secara bertahap dan aman.
+## Apa ini?
+
+Cleaner adalah konfigurasi otomatis yang menjaga folder log server kamu tetap bersih dan tidak memenuhi disk.
+
+Bayangkan folder `/home/admin/logs` seperti tong sampah digital. Setiap hari server menulis catatan aktivitas (log) ke sana. Jika tidak pernah dibersihkan, lama-lama disk akan penuh dan server bisa mati.
+
+Cleaner bekerja di balik layar setiap hari secara otomatis untuk:
+- Mengarsipkan log lama
+- Menghapus log yang sudah terlalu tua
+- Memastikan disk tidak sampai penuh
 
 ---
 
-## Tujuan
+## Cara Kerja (Singkat)
 
-- Mencegah disk `/home/ec2-user/logs` penuh akibat akumulasi file log
-- Menghapus file log kadaluarsa (default: lebih dari 14 hari)
-- Menjaga performa I/O server tetap stabil dengan mode *slow delete* (truncate bertahap)
-- Aman dijalankan di lingkungan produksi: tidak menghapus file yang masih dibuka proses lain
-
----
-
-## Cara Penggunaan
-
-### 1. Persiapan
-
-```bash
-# Buat direktori log jika belum ada
-mkdir -p /home/ec2-user/logs
-
-# Set permission script
-chmod 700 /home/ec2-user/cleaner-amazon-linux.sh
 ```
-
-### 2. Menjalankan Manual
-
-```bash
-# Jalankan dengan pengaturan default (threshold 90%)
-/home/ec2-user/cleaner-amazon-linux.sh
-
-# Mulai bersih saat disk mencapai 80%, bersihkan sampai 70%
-/home/ec2-user/cleaner-amazon-linux.sh -t 80 -r 70
-
-# Fast delete (rm -rf langsung, tanpa throttle)
-/home/ec2-user/cleaner-amazon-linux.sh -n
-
-# Force hapus file terbesar jika masih penuh
-/home/ec2-user/cleaner-amazon-linux.sh -f
-
-# Debug mode (catat detail ke log)
-/home/ec2-user/cleaner-amazon-linux.sh -d
-```
-
-### 3. Opsi CLI
-
-| Flag | Deskripsi | Default |
-|------|-----------|---------|
-| `-r <angka>` | Target penggunaan disk setelah bersih (%) | `90` |
-| `-t <angka>` | Mulai bersih saat disk mencapai nilai ini (%) | `90` |
-| `-b <ukuran>` | Ukuran chunk saat slow delete (contoh: `50m`, `1g`) | `20m` |
-| `-n` | Fast delete — pakai `rm -rf` langsung | - |
-| `-s` | Random sleep sebelum mulai (untuk cluster) | - |
-| `-f` | Force hapus file terbesar jika disk masih penuh | - |
-| `-d` | Aktifkan debug logging | - |
-| `-i` | Mode interaktif — kill instance lain yang berjalan | - |
-
-### 4. File Konfigurasi (opsional)
-
-Buat file `/home/ec2-user/cleaner.conf` dengan permission `600`:
-
-```bash
-chmod 600 /home/ec2-user/cleaner.conf
-```
-
-Contoh isi config:
-
-```ini
-# Target penggunaan disk setelah bersih (%)
-to=75
-
-# Mulai bersih saat disk mencapai (%)
-from=85
-
-# Ukuran chunk slow delete dalam MB
-block=50
-
-# Aktifkan fast delete (tidak bisa dipakai bersamaan dengan block)
-# fast
-
-# Random sleep untuk cluster
-# sleep
-
-# Debug logging
-# debug
-
-# Force hapus file terbesar
-# force
-```
-
-> Config file akan diabaikan jika menjalankan dengan flag `--noconf`.
-
-### 5. Jadwal Otomatis dengan Cron
-
-```bash
-crontab -e
-```
-
-Tambahkan baris berikut untuk menjalankan setiap jam:
-
-```cron
-0 * * * * /bin/bash /home/ec2-user/cleaner-amazon-linux.sh >> /home/ec2-user/logs/cron.log 2>&1
-```
-
-### 6. Jadwal dengan systemd Timer (direkomendasikan)
-
-Buat `/etc/systemd/system/cleaner.service`:
-
-```ini
-[Unit]
-Description=Log Cleaner
-
-[Service]
-Type=oneshot
-User=ec2-user
-ExecStart=/bin/bash /home/ec2-user/cleaner-amazon-linux.sh
-```
-
-Buat `/etc/systemd/system/cleaner.timer`:
-
-```ini
-[Unit]
-Description=Jalankan Log Cleaner setiap jam
-
-[Timer]
-OnCalendar=hourly
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-Aktifkan:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now cleaner.timer
-sudo systemctl list-timers cleaner.timer
+Setiap hari (tengah malam)
+  └─ Logrotate membaca konfigurasi cleaner
+       ├─ File log aktif → diarsipkan dan dikompres
+       ├─ Arsip lebih dari 14 hari → dihapus otomatis
+       └─ Disk masih > 80%? → hapus arsip tertua sampai aman
 ```
 
 ---
 
-## Cara Kerja
+## Fitur
 
-Script membersihkan log secara berlapis, berhenti begitu disk sudah di bawah target:
-
-```
-1. Disk ≥ 97%?  → Hapus file log sangat besar (>30G atau >50G)
-2. Hapus log kadaluarsa (lebih dari 14 hari)
-3. Disk masih penuh? → Hapus per hari mundur (13 hari, 12 hari, dst.)
-4. Disk masih penuh? → Hapus per jam mundur (24 jam, 23 jam, dst.)
-5. Disk masih penuh + flag -f? → Hapus file terbesar (maks. 5x)
-```
-
-File yang masih terbuka oleh proses lain tidak dihapus melainkan dikosongkan isinya (*crush*), sehingga proses yang memakai file tersebut tidak crash.
+| Fitur | Keterangan |
+|---|---|
+| Rotate harian | Log diarsipkan setiap hari |
+| Simpan 14 hari | Arsip lebih dari 14 hari dihapus otomatis |
+| Kompresi otomatis | File lama dikompres (.gz) untuk hemat ruang |
+| Aman untuk aplikasi aktif | File yang sedang ditulis aplikasi tidak dirusak |
+| Penjaga disk 80% | Jika disk masih penuh setelah rotate, arsip tertua ikut dihapus |
+| Format nama jelas | Nama file arsip menyertakan tanggal, contoh: `app.log-2026-04-18.gz` |
 
 ---
 
-## Log
+## Cara Pasang
 
-Script mencatat semua aktivitas ke:
+### 1. Salin file ke logrotate
+
+```bash
+sudo cp cleaner.sh /etc/logrotate.d/cleaner
+```
+
+### 2. Pastikan hak akses benar
+
+```bash
+sudo chmod 644 /etc/logrotate.d/cleaner
+sudo chown root:root /etc/logrotate.d/cleaner
+```
+
+### 3. Selesai
+
+Logrotate akan menjalankannya otomatis setiap hari. Tidak perlu konfigurasi tambahan.
+
+---
+
+## Cara Uji Coba (Tanpa Eksekusi Nyata)
+
+Gunakan perintah ini untuk melihat apa yang *akan* dilakukan cleaner, tanpa benar-benar mengubah file:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/cleaner
+```
+
+Jika tidak ada pesan error, konfigurasi sudah benar.
+
+---
+
+## Cara Jalankan Manual
+
+Jika ingin menjalankan pembersihan sekarang tanpa menunggu jadwal:
+
+```bash
+sudo logrotate -f /etc/logrotate.d/cleaner
+```
+
+---
+
+## Cara Cek Log Aktivitas Cleaner
+
+Cleaner mencatat setiap tindakan pembersihan ke file:
 
 ```
-/home/ec2-user/logs/cleaner.log.YYYY-MM-DD
+/home/admin/logs/cleaner.log
 ```
 
 Contoh isi log:
-
 ```
-2025-04-17 04:12:03 [INFO] deleted expired file /home/ec2-user/logs/app.log.2025-04-01 size 52428800
-2025-04-17 04:12:05 [WARN] deleted huge file /home/ec2-user/logs/access.log size 34359738368
-2025-04-17 04:12:10 [ERROR] give up deleting largest files
+2026-04-18 03:00:12 [WARN] disk usage 85%, cleaning old rotated logs...
+2026-04-18 03:00:13 [INFO] force deleted /home/admin/logs/app.log-2026-04-01.gz
 ```
 
 ---
 
-## Rekomendasi Produksi
+## Kompatibilitas
 
-| # | Rekomendasi | Alasan |
-|---|-------------|--------|
-| 1 | Jangan jalankan sebagai `root` | Script menghapus file; jalankan sebagai `ec2-user` dengan akses terbatas hanya ke `LOGS_DIR` |
-| 2 | Permission script `700` | Mencegah user lain membaca atau memodifikasi script |
-| 3 | Permission config `600` | Script akan memperingatkan jika permission config terlalu longgar |
-| 4 | Gunakan systemd timer, bukan cron | Systemd menyediakan sandboxing, logging via journald, dan restart policy |
-| 5 | Pantau log cleaner secara berkala | Pastikan tidak ada error berulang atau file yang tidak terhapus |
-| 6 | Set `-t` dan `-r` dengan selisih minimal 5% | Contoh: `-t 85 -r 80` agar tidak terlalu agresif menghapus |
-| 7 | Hindari flag `-n` (fast delete) di produksi | Fast delete menyebabkan spike I/O yang bisa mempengaruhi performa |
-| 8 | Install `lsof` di server | `sudo dnf install lsof` — memastikan file yang masih dipakai tidak dihapus paksa |
+| Sistem Operasi | Status |
+|---|---|
+| Amazon Linux 2023 | Penuh |
+| Ubuntu 20.04 / 22.04 | Penuh |
+| Debian 10 / 11 / 12 | Penuh |
+| RHEL / CentOS 8+ | Penuh |
+| Alpine Linux | Penuh |
+| Amazon Linux 2 | Hampir penuh — fitur `maxsize` tidak aktif* |
+
+> **Amazon Linux 2:** Jika muncul error saat pasang, hapus baris `maxsize 30G` dari file `cleaner.sh` menggunakan teks editor, lalu ulangi langkah pemasangan.
 
 ---
 
-## Dependensi
+## Struktur Folder yang Dipantau
 
-| Perintah | Paket (Amazon Linux) | Keterangan |
-|----------|----------------------|------------|
-| `lsof` | `sudo dnf install lsof` | Deteksi file yang sedang dibuka; ada fallback `/proc/*/fd` |
-| `ionice` | Bawaan (`util-linux`) | Prioritas I/O idle agar tidak ganggu performa |
-| `nice` | Bawaan (`coreutils`) | Prioritas CPU rendah |
-| `truncate` | Bawaan (`coreutils`) | Slow delete bertahap |
-| `find` | Bawaan (`findutils`) | Pencarian file log |
+```
+/home/admin/logs/
+├── app.log                        ← file aktif (tidak disentuh saat sedang ditulis)
+├── app.log-2026-04-17.gz          ← arsip kemarin
+├── app.log-2026-04-16.gz          ← arsip 2 hari lalu
+├── ...
+└── cleaner.log                    ← log aktivitas cleaner sendiri
+```
+
+---
+
+## Pertanyaan Umum
+
+**Q: Apakah data log yang masih dibutuhkan bisa terhapus?**
+A: Tidak. Cleaner hanya menghapus arsip yang sudah dikompres (file `.gz`), bukan file log yang sedang aktif digunakan aplikasi.
+
+**Q: Apakah bisa mengubah batas 14 hari atau 80%?**
+A: Bisa. Buka file `cleaner.sh` dengan teks editor, ubah angka `14` di baris `rotate 14` atau angka `80` di baris `TARGET=80`.
+
+**Q: Apakah cleaner jalan sendiri atau harus dijalankan manual?**
+A: Jalan sendiri. Setelah dipasang, logrotate menjalankannya otomatis setiap hari (biasanya tengah malam).

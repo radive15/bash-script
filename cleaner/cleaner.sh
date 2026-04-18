@@ -41,10 +41,10 @@
     # Tidak rotate jika file kosong
     notifempty
 
-    # Rotate juga jika ukuran file melebihi 30GB meski belum sehari
+    # Rotate juga jika ukuran file melebihi 10GB meski belum sehari
     # Setara dengan clean_huge() di zclean.sh
     # CATATAN: butuh logrotate >= 3.9.0 (Amazon Linux 2 tidak mendukung)
-    maxsize 30G
+    maxsize 10G
 
     # ── Kompresi ──────────────────────────────────────────────────────────────
 
