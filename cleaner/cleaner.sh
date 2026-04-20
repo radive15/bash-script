@@ -42,7 +42,6 @@
     notifempty
 
     # Rotate juga jika ukuran file melebihi 10GB meski belum sehari
-    # Setara dengan clean_huge() di zclean.sh
     # CATATAN: butuh logrotate >= 3.9.0 (Amazon Linux 2 tidak mendukung)
     maxsize 10G
 
@@ -64,7 +63,6 @@
     # ── Disk Usage Check (post-rotate) ────────────────────────────────────────
     # Jalankan setelah semua file dirotate.
     # Jika disk masih > 80%, hapus file rotate tertua sampai di bawah 80%.
-    # Setara dengan logika clean_until() di zclean.sh.
     postrotate
         LOGS_DIR="/home/admin/logs"
         TARGET=80
