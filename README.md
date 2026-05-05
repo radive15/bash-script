@@ -17,6 +17,25 @@ bash-script/
 
 ---
 
+## Roadmap
+
+Project yang akan dikerjakan:
+
+| # | Folder | Script | Deskripsi |
+|---|--------|--------|-----------|
+| 1 | `backup-s3` | `backup-s3.sh` | Backup file/folder ke S3 dengan kompresi, enkripsi, dan retensi otomatis |
+| 2 | `health-check` | `health-check.sh` | Monitor CPU/RAM/disk, kirim alert ke SNS atau email jika melebihi threshold |
+| 3 | `ssl-renew` | `ssl-renew.sh` | Otomasi renewal sertifikat Let's Encrypt via certbot + notifikasi jika gagal |
+| 4 | `deploy` | `deploy.sh` | Zero-downtime deployment: pull artifact dari S3, rolling restart aplikasi |
+| 5 | `snapshot` | `snapshot.sh` | Otomasi EBS snapshot harian + hapus snapshot lama berdasarkan retensi |
+| 6 | `user-manager` | `user-manager.sh` | Provisioning/deprovisioning user Linux dari file CSV |
+| 7 | `log-shipper` | `log-shipper.sh` | Upload log server ke S3 atau CloudWatch Logs secara terjadwal |
+| 8 | `port-audit` | `port-audit.sh` | Scan port terbuka, bandingkan dengan whitelist, alert jika ada port tidak dikenal |
+| 9 | `ec2-inventory` | `ec2-inventory.sh` | List semua EC2 instance di region dengan tag, IP, status, dan instance type |
+| 10 | `db-backup` | `db-backup.sh` | Backup MySQL/PostgreSQL otomatis ke S3 dengan kompresi dan enkripsi |
+
+---
+
 ## check-folder
 
 **Script:** `check-folder-size.sh`
