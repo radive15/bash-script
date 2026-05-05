@@ -8,6 +8,7 @@ Kumpulan bash script untuk kebutuhan operasional server Linux, khususnya di ling
 
 ```
 bash-script/
+├── backup-s3/          # Backup file/folder ke S3 dengan kompresi, enkripsi, dan retensi otomatis
 ├── check-folder/       # Analisis penggunaan disk
 ├── cleaner/            # Rotasi dan pembersihan log otomatis
 ├── dns/                # Bootstrap hostname & DNS saat EC2 pertama kali jalan
@@ -138,3 +139,25 @@ Membuat akun SFTP terisolasi untuk merchant secara otomatis. Setiap merchant men
 - Entry konfigurasi di `/etc/rssh.conf`
 - Password acak (tidak disimpan permanen)
 - Konfigurasi sync di `/metadata/sftp/bin/sync.conf`
+
+---
+
+## backup-s3
+
+**Script:** `backup-s3.sh`
+
+Backup file/folder ke Amazon S3 dengan kompresi, enkripsi, dan retensi otomatis.
+
+**Kapan dipakai:** Dijalankan via cron secara terjadwal (harian/mingguan) untuk memastikan data server tersimpan aman di S3 dengan pengelolaan retensi otomatis.
+
+**Prasyarat:**
+- `aws cli` terinstall dan terkonfigurasi
+- IAM Role dengan izin `s3:PutObject`, `s3:GetObject`, `s3:ListBucket`, `s3:DeleteObject`
+- (Opsional) GPG terinstall jika menggunakan enkripsi lokal
+
+**Cara menjalankan:**
+```bash
+sudo bash backup-s3.sh                        # Backup dengan konfigurasi default
+sudo bash backup-s3.sh --source /var/www/app  # Tentukan folder sumber
+sudo bash backup-s3.sh --dry-run              # Simulasi tanpa upload ke S3
+```
