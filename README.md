@@ -8,7 +8,9 @@ Kumpulan bash script untuk kebutuhan operasional server Linux, khususnya di ling
 
 ```
 bash-script/
-├── backup-s3/          # Backup file/folder ke S3 dengan kompresi, enkripsi, dan retensi otomatis
+├── backup-s3/
+│   ├── backup-s3.sh    # Script utama backup ke S3
+│   └── README.md
 ├── check-folder/       # Analisis penggunaan disk
 ├── cleaner/            # Rotasi dan pembersihan log otomatis
 ├── dns/                # Bootstrap hostname & DNS saat EC2 pertama kali jalan
